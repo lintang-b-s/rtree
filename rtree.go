@@ -5,6 +5,8 @@
 package rtree
 
 import (
+	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -45,12 +47,13 @@ type numeric interface {
 }
 
 type RTreeGN[N numeric, T any] struct {
-	icow  uint64
-	count int
-	rect  rect[N]
-	root  *node[N, T]
-	empty T
-	qpool *sync.Pool
+	icow   uint64
+	count  int
+	rect   rect[N]
+	root   *node[N, T]
+	empty  T
+	qpool  *sync.Pool
+	static bool
 }
 
 type rect[N numeric] struct {
@@ -138,6 +141,9 @@ func (n *node[N, T]) rect() rect[N] {
 
 // Insert data into tree
 func (tr *RTreeGN[N, T]) Insert(min, max [2]N, data T) {
+	if tr.static {
+		panic("r-tree is static!")
+	}
 	ir := rect[N]{min, max}
 	if tr.root == nil {
 		if tr.qpool == nil {
@@ -596,6 +602,9 @@ func (n *node[N, T]) qsort(s, e int, axis int, rev, max bool) {
 
 // Delete data from tree
 func (tr *RTreeGN[N, T]) Delete(min, max [2]N, data T) {
+	if tr.static {
+		panic("r-tree is static!")
+	}
 	tr.delete(min, max, data)
 }
 
@@ -750,6 +759,9 @@ func (tr *RTreeGN[N, T]) Replace(
 	oldMin, oldMax [2]N, oldData T,
 	newMin, newMax [2]N, newData T,
 ) {
+	if tr.static {
+		panic("r-tree is static!")
+	}
 	if tr.delete(oldMin, oldMax, oldData) {
 		tr.Insert(newMin, newMax, newData)
 	}
@@ -1190,4 +1202,209 @@ func (tr *RTree) Copy() *RTree {
 // Clear will delete all items.
 func (tr *RTree) Clear() {
 	tr.base.Clear()
+}
+
+func ceilDiv(a, b int) int {
+	q := a / b
+	// adjust up if signs same and a not divisible by b
+	if (a^b) > 0 && a%b != 0 {
+		q++
+	}
+	return q
+}
+
+func permute[T any](perm []int, items []T) []T {
+	n := len(perm)
+	permuted := make([]T, n)
+	for i := 0; i < n; i++ {
+		permuted[i] = items[perm[i]]
+	}
+	return permuted
+}
+
+func (tr *RTreeGN[N, T]) buildInternalNodes(nodes []*node[N, T]) []*node[N, T] {
+	r := len(nodes)
+	center := make([][2]N, r)
+	perm := make([]int, r)
+	rects := make([]rect[N], r)
+	nMins := make([][2]N, r)
+	nMaxs := make([][2]N, r)
+
+	for i := range nodes {
+		nMins[i] = nodes[i].rect().min
+		nMaxs[i] = nodes[i].rect().max
+		center[i] = [2]N{(nMins[i][0] + nMaxs[i][0]) / N(2), (nMins[i][1] + nMaxs[i][1]) / N(2)}
+		perm[i] = i
+		rects[i] = rect[N]{nMins[i], nMaxs[i]}
+	}
+
+	// sort by x-coordinate
+	sort.Slice(perm, func(i, j int) bool {
+		return center[perm[i]][0] < center[perm[j]][0]
+	})
+
+	nodes = permute(perm, nodes)
+	center = permute(perm, center)
+	rects = permute(perm, rects)
+
+	// partition into S vertical slices
+	// P = ceil(r/n)
+	// S = ceil(sqrt(P))
+	n := maxEntries
+	P := ceilDiv(r, n)
+	S := int(math.Ceil(math.Sqrt(float64(P))))
+
+	parentNodes := make([]*node[N, T], 0, P)
+
+	vertSliceSize := S * n
+	// partition them into S vertical slices,  each slice has S*n items
+	for i := 0; i < r; i += vertSliceSize {
+		if i+vertSliceSize > r {
+			vertSliceSize = r - i
+		}
+
+		vertRects := rects[i : i+vertSliceSize]
+		vertCenters := center[i : i+vertSliceSize]
+		vertNodes := nodes[i : i+vertSliceSize]
+
+		perm = make([]int, vertSliceSize)
+		for q := 0; q < vertSliceSize; q++ {
+			perm[q] = q
+		}
+
+		// sort each vertical slice by y-coordinate
+		sort.Slice(perm, func(q, k int) bool {
+			return vertCenters[perm[q]][1] < vertCenters[perm[k]][1]
+		})
+
+		vertRects = permute(perm, vertRects)
+		vertNodes = permute(perm, vertNodes)
+
+		// group them into runs of length n
+		for j := 0; j < vertSliceSize; j += n {
+
+			entriesSize := n
+			if j+entriesSize > vertSliceSize {
+				entriesSize = vertSliceSize - j
+			}
+
+			childRects := vertRects[j : j+entriesSize]
+			childNodes := vertNodes[j : j+entriesSize] // entries di parent node ini
+
+			// create new parent node with n entries
+			parent := tr.newNode(false) // internal node
+			copy(parent.rects[:], childRects)
+			childrens := parent.children()
+			copy(childrens, childNodes)
+			parent.count = int16(entriesSize)
+
+			parentNodes = append(parentNodes, parent)
+		}
+	}
+
+	return parentNodes
+}
+
+func (tr *RTreeGN[N, T]) buildLeafNodes(mins, maxs [][2]N, items []T) []*node[N, T] {
+	// create leaf nodes
+	centers := make([][2]N, len(items))
+	r := len(items)
+	perm := make([]int, r)
+	rects := make([]rect[N], r)
+	for i := range items {
+		centers[i] = [2]N{(mins[i][0] + maxs[i][0]) / N(2), (mins[i][1] + maxs[i][1]) / N(2)}
+		perm[i] = i
+		rects[i] = rect[N]{mins[i], maxs[i]}
+	}
+
+	// sort by x-coordinate
+	sort.Slice(perm, func(i, j int) bool {
+		return centers[perm[i]][0] < centers[perm[j]][0]
+	})
+
+	items = permute(perm, items)
+	centers = permute(perm, centers)
+	rects = permute(perm, rects)
+
+	// partition into S vertical slices
+	// P = ceil(r/n)
+	// S = ceil(sqrt(P))
+	n := maxEntries
+	P := ceilDiv(r, n)
+	S := int(math.Ceil(math.Sqrt(float64(P))))
+
+	leafNodes := make([]*node[N, T], 0, P)
+
+	vertSliceSize := S * n
+	// partition them into S vertical slices, each slice has S*n items
+	for i := 0; i < r; i += vertSliceSize {
+		if i+vertSliceSize > r {
+			vertSliceSize = r - i
+		}
+
+		vertRects := rects[i : i+vertSliceSize]
+		vertCenters := centers[i : i+vertSliceSize]
+		vertItems := items[i : i+vertSliceSize]
+
+		perm = make([]int, vertSliceSize)
+		for q := 0; q < vertSliceSize; q++ {
+			perm[q] = q
+		}
+
+		// sort each vertical slice by y-coordinate
+		sort.Slice(perm, func(q, k int) bool {
+			return vertCenters[perm[q]][1] < vertCenters[perm[k]][1]
+		})
+
+		vertRects = permute(perm, vertRects)
+		vertItems = permute(perm, vertItems)
+
+		// group them into runs of length n
+		for j := 0; j < vertSliceSize; j += n {
+
+			leafSize := n // leafSize = 3
+			if j+leafSize > vertSliceSize {
+				leafSize = vertSliceSize - j
+			}
+
+			leafRects := vertRects[j : j+leafSize]
+			leafItems := vertItems[j : j+leafSize] // items di leaf node ini
+
+			// create new leaf with n entries
+			leaf := tr.newNode(true)
+			copy(leaf.rects[:], leafRects)
+			items := leaf.items()
+			copy(items, leafItems)
+			leaf.count = int16(leafSize)
+			leafNodes = append(leafNodes, leaf)
+		}
+	}
+	return leafNodes
+}
+
+/*
+Bulk. build sort-tile-recursive packed static r-tree.
+A static R-tree means that once the tree is built, nodes cannot be added or removed.
+ref:
+https://ia600709.us.archive.org/13/items/nasa_techdoc_19970016975/19970016975.pdf
+https://xilinx.github.io/Vitis_Libraries/data_analytics/2022.1/guide_L2/internals/geospatialJoin.html
+*/
+func (tr *RTreeGN[N, T]) Bulk(mins, maxs [][2]N, items []T) {
+	r := len(items)
+	levelNodes := tr.buildLeafNodes(mins, maxs, items)
+	// recursively create internal nodes bottom-up until root node created
+	for len(levelNodes) > 1 {
+		levelNodes = tr.buildInternalNodes(levelNodes)
+	}
+
+	tr.root = levelNodes[0]
+	tr.rect = tr.root.rect()
+	tr.count = r
+	if tr.qpool == nil {
+		tr.qpool = &sync.Pool{
+			New: func() any { return &queue[N, T]{} },
+		}
+	}
+
+	tr.static = true
 }

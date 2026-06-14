@@ -1,4 +1,4 @@
-module github.com/tidwall/rtree
+module github.com/lintang-b-s/rtree
 
 go 1.18
 
@@ -8,3 +8,5 @@ require (
 )
 
 require github.com/tidwall/cities v0.1.0 // indirect
+
+

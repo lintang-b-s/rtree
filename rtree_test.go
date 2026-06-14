@@ -37,6 +37,7 @@ func TestGeoIndex(t *testing.T) {
 	t.Run("BenchVarious", func(t *testing.T) {
 		geoindex.Tests.TestBenchVarious(t, &RTree{}, 1000000)
 	})
+
 	t.Run("RandomRects", func(t *testing.T) {
 		geoindex.Tests.TestRandomRects(t, &RTree{}, 10000)
 	})
@@ -114,104 +115,6 @@ func randRectOffset32(r rect[float32], kind byte) rect[float32] {
 		}
 		return r
 	}
-}
-
-func TestRTreeBenchFloat64(t *testing.T) {
-	numPointOrRects := 1_000_000
-	kind := byte('m')
-	var tr RTreeG[int]
-
-	N := numPointOrRects
-	rects := make([]rect[float64], N)
-	for i := 0; i < N; i++ {
-		rects[i] = randRect(kind)
-	}
-
-	lotsa.Output = os.Stdout
-	lotsa.MemUsage = true
-
-	fmt.Printf("\n== generic [float64, int] ==\n")
-	fmt.Printf("insert:       ")
-	lotsa.Ops(N, 1, func(i, _ int) {
-		tr.Insert(rects[i].min, rects[i].max, i)
-	})
-
-	fmt.Printf("search-item:  ")
-	var count int
-	lotsa.Ops(N, 1, func(i, _ int) {
-		tr.Search(rects[i].min, rects[i].max,
-			func(min, max [2]float64, value int) bool {
-				if value == i {
-					count++
-					return false
-				}
-				return true
-			},
-		)
-	})
-	if count != N {
-		t.Fatalf("expected %d, got %d", N, count)
-	}
-
-	fmt.Printf("search-1%%:    ")
-	lotsa.Ops(10_000, 1, func(i, _ int) {
-		const p = 0.01
-		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
-		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
-		tr.Search(min, max, func(min, max [2]float64, value int) bool {
-			return true
-		})
-	})
-
-	fmt.Printf("search-5%%:    ")
-	lotsa.Ops(10_000, 1, func(i, _ int) {
-		const p = 0.05
-		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
-		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
-		tr.Search(min, max, func(min, max [2]float64, value int) bool {
-			return true
-		})
-	})
-
-	fmt.Printf("search-10%%:   ")
-	lotsa.Ops(10_000, 1, func(i, _ int) {
-		const p = 0.10
-		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
-		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
-		tr.Search(min, max, func(min, max [2]float64, value int) bool {
-			return true
-		})
-	})
-
-	fmt.Printf("delete:       ")
-	lotsa.Ops(N, 1, func(i, _ int) {
-		tr.Delete(rects[i].min, rects[i].max, i)
-	})
-	if tr.Len() != 0 {
-		t.Fatalf("expected %d, got %d", 0, tr.Len())
-	}
-
-	// if false {
-	// resinert all items and then replace
-	for i := 0; i < N; i++ {
-		tr.Insert(rects[i].min, rects[i].max, i)
-	}
-	rectsReplace := make([]rect[float64], N)
-	for i := 0; i < N; i++ {
-		rectsReplace[i] = randRectOffset(rects[i], kind)
-	}
-	fmt.Printf("replace:      ")
-	lotsa.Ops(N, 1, func(i, _ int) {
-		tr.Replace(
-			rects[i].min, rects[i].max, i,
-			rectsReplace[i].min, rectsReplace[i].max, i,
-		)
-	})
-	if tr.Len() != N {
-		t.Fatalf("expected %d, got %d", N, tr.Len())
-	}
-	// }
-
 }
 
 func TestRTreeBenchFloat32(t *testing.T) {
@@ -334,6 +237,46 @@ func TestClear(t *testing.T) {
 
 }
 
+func TestClearBulk(t *testing.T) {
+	var tr RTree
+	mins := make([][2]float64, 1_000)
+	maxs := make([][2]float64, 1_000)
+	items := make([]any, 1_000)
+	for i := 0; i < 1_000; i++ {
+		rect := randRect('m')
+
+		mins[i] = rect.min
+		maxs[i] = rect.max
+		items[i] = i
+	}
+
+	tr.base.base.Bulk(mins, maxs, items)
+	if tr.Len() != 1_000 {
+		t.Fatalf("expected %d, got %d", 1_000, tr.Len())
+	}
+	tr.Clear()
+	if tr.Len() != 0 {
+		t.Fatalf("expected %d, got %d", 0, tr.Len())
+	}
+
+	mins = make([][2]float64, 1_000)
+	maxs = make([][2]float64, 1_000)
+	items = make([]any, 1_000)
+	for i := 0; i < 1_000; i++ {
+		rect := randRect('m')
+
+		mins[i] = rect.min
+		maxs[i] = rect.max
+		items[i] = i
+	}
+	tr.base.base.Bulk(mins, maxs, items)
+
+	if tr.Len() != 1_000 {
+		t.Fatalf("expected %d, got %d", 1_000, tr.Len())
+	}
+
+}
+
 func TestRandomPointsSVG(t *testing.T) {
 	const SEED = 909
 	const N = 100_000
@@ -345,6 +288,27 @@ func TestRandomPointsSVG(t *testing.T) {
 			tr.Insert(pt, pt, i)
 		}
 		os.WriteFile("rand1.svg", []byte(tr.svg()), 0666)
+	}
+}
+
+func TestRandomPointsSVGBulk(t *testing.T) {
+	const SEED = 909
+	const N = 100_000
+	{
+		rand.Seed(SEED)
+		var tr RTreeG[int]
+
+		mins := make([][2]float64, N)
+		maxs := make([][2]float64, N)
+		items := make([]int, N)
+		for i := 0; i < N; i++ {
+			pt := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+			mins[i] = pt
+			maxs[i] = pt
+			items[i] = i
+		}
+		tr.base.Bulk(mins, maxs, items)
+		os.WriteFile("rand1_bulk.svg", []byte(tr.svg()), 0666)
 	}
 }
 
@@ -496,12 +460,29 @@ func writeSVG(pts, filename string) {
 	os.WriteFile(filename, []byte(svg), 0666)
 }
 
+func writeSVGBulk(pts, filename string) {
+	var tr RTreeG[int]
+	mins := make([][2]float64, 0, 1000)
+	maxs := make([][2]float64, 0, 1000)
+	items := make([]int, 0, 1000)
+	for i, pt := range parsePts(pts) {
+		mins = append(mins, pt)
+		maxs = append(maxs, pt)
+		items = append(items, i)
+	}
+	tr.base.Bulk(mins, maxs, items)
+	svg := tr.svg()
+	os.WriteFile(filename, []byte(svg), 0666)
+}
+
 func TestPredefinedSVG(t *testing.T) {
 	writeSVG(predefPts, "predefined.svg")
+	writeSVGBulk(predefPts, "predefined_bulk.svg")
 }
 
 func TestCitiesSVG(t *testing.T) {
 	writeSVG(citiesPts, "cities.svg")
+	writeSVGBulk(citiesPts, "cities_bulk.svg")
 }
 
 func TestSane(t *testing.T) {
@@ -956,4 +937,291 @@ func TestNearby(t *testing.T) {
 		}
 	})
 
+	t.Run("G Bulk STRTree", func(t *testing.T) {
+		var output []int
+		var tr RTreeG[int]
+
+		tr.base.Bulk([][2]float64{{100, 100}, {200, 200}}, [][2]float64{{100, 100}, {200, 200}}, []int{1, 2})
+		tr.Nearby(
+			BoxDist[float64, int]([2]float64{10, 10}, [2]float64{10, 10}, nil),
+			func(min, max [2]float64, data int, dist float64) bool {
+				output = append(output, data, int(dist))
+				return true
+			},
+		)
+		exp := "[1 16200 2 72200]"
+		if fmt.Sprintf("%d", output) != exp {
+			t.Fatalf("expected %s, got %d", exp, output)
+		}
+	})
+
+	t.Run("GN Bulk", func(t *testing.T) {
+		var output []int
+		var tr RTreeGN[int, int]
+
+		tr.Bulk([][2]int{{100, 100}, {200, 200}}, [][2]int{{100, 100}, {200, 200}}, []int{1, 2})
+		tr.Nearby(
+			BoxDist[int, int]([2]int{10, 10}, [2]int{10, 10}, nil),
+			func(min, max [2]int, data int, dist int) bool {
+				output = append(output, data, dist)
+				return true
+			},
+		)
+		exp := "[1 16200 2 72200]"
+		if fmt.Sprintf("%d", output) != exp {
+			t.Fatalf("expected %s, got %d", exp, output)
+		}
+	})
+
+}
+
+func TestRTreeBenchFloat64(t *testing.T) {
+	numPointOrRects := 5_000_000
+	kind := byte('m')
+	var tr RTreeG[int]
+
+	N := numPointOrRects
+	rects := make([]rect[float64], N)
+	for i := 0; i < N; i++ {
+		rects[i] = randRect(kind)
+	}
+
+	lotsa.Output = os.Stdout
+	lotsa.MemUsage = true
+
+	fmt.Printf("\n== generic [float64, int] ==\n")
+	fmt.Printf("insert:       ")
+	lotsa.Ops(N, 1, func(i, _ int) {
+		tr.Insert(rects[i].min, rects[i].max, i)
+	})
+
+	fmt.Printf("search-item:  ")
+	var count int
+	lotsa.Ops(N, 1, func(i, _ int) {
+		tr.Search(rects[i].min, rects[i].max,
+			func(min, max [2]float64, value int) bool {
+				if value == i {
+					count++
+					return false
+				}
+				return true
+			},
+		)
+	})
+
+	if count != N {
+		t.Fatalf("expected %d, got %d", N, count)
+	}
+
+	fmt.Printf("search-0.00002%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.0000002
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-0.2%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.002
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-1%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.01
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-5%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.05
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-10%%:   ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.10
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("delete:       ")
+	lotsa.Ops(N, 1, func(i, _ int) {
+		tr.Delete(rects[i].min, rects[i].max, i)
+	})
+	if tr.Len() != 0 {
+		t.Fatalf("expected %d, got %d", 0, tr.Len())
+	}
+
+	// if false {
+	// resinert all items and then replace
+	for i := 0; i < N; i++ {
+		tr.Insert(rects[i].min, rects[i].max, i)
+	}
+	rectsReplace := make([]rect[float64], N)
+	for i := 0; i < N; i++ {
+		rectsReplace[i] = randRectOffset(rects[i], kind)
+	}
+	fmt.Printf("replace:      ")
+	lotsa.Ops(N, 1, func(i, _ int) {
+		tr.Replace(
+			rects[i].min, rects[i].max, i,
+			rectsReplace[i].min, rectsReplace[i].max, i,
+		)
+	})
+	if tr.Len() != N {
+		t.Fatalf("expected %d, got %d", N, tr.Len())
+	}
+	// }
+
+}
+
+/*
+seed: 1781430046079402180
+=== RUN   TestRTreeBenchFloat64
+
+== generic [float64, int] ==
+insert:       5,000,000 ops in 3666ms, 1,364,035/sec, 733 ns/op, 302.6 MB, 63 bytes/op
+search-item:  5,000,000 ops in 3281ms, 1,523,890/sec, 656 ns/op
+search-0.00002%:    10,000 ops in 12ms, 839,792/sec, 1190 ns/op
+search-0.2%:    10,000 ops in 23ms, 430,379/sec, 2323 ns/op
+search-1%:    10,000 ops in 107ms, 93,392/sec, 10707 ns/op
+search-5%:    10,000 ops in 1499ms, 6,671/sec, 149901 ns/op
+search-10%:   10,000 ops in 5261ms, 1,900/sec, 526083 ns/op
+delete:       5,000,000 ops in 3569ms, 1,400,763/sec, 713 ns/op
+replace:      5,000,000 ops in 5914ms, 845,497/sec, 1182 ns/op
+--- PASS: TestRTreeBenchFloat64 (27.94s)
+PASS
+ok      github.com/lintang-b-s/rtree    27.981s
+/*
+
+
+/*
+seed: 1781430078865823170
+=== RUN   TestSTRTreeBulkBenchFloat64
+
+== generic [float64, int] ==
+insert:       5,000,000 ops in 131ms, 38,244,966/sec, 26 ns/op, 464 bytes, 0 bytes/op
+search-item:  5,000,000 ops in 3749ms, 1,333,754/sec, 749 ns/op
+search-0.00002%:    10,000 ops in 13ms, 744,928/sec, 1342 ns/op
+search-0.2%:    10,000 ops in 25ms, 392,641/sec, 2546 ns/op
+search-1%:    10,000 ops in 115ms, 86,911/sec, 11505 ns/op
+search-5%:    10,000 ops in 1154ms, 8,667/sec, 115373 ns/op
+search-10%:   10,000 ops in 3519ms, 2,841/sec, 351902 ns/op
+--- PASS: TestSTRTreeBulkBenchFloat64 (12.89s)
+PASS
+ok      github.com/lintang-b-s/rtree    12.914s
+*/
+
+func TestSTRTreeBulkBenchFloat64(t *testing.T) {
+	numPointOrRects := 5_000_000
+	kind := byte('m')
+	var tr RTreeG[int]
+
+	N := numPointOrRects
+	rects := make([]rect[float64], N)
+	for i := 0; i < N; i++ {
+		rects[i] = randRect(kind)
+	}
+
+	lotsa.Output = os.Stdout
+	lotsa.MemUsage = true
+
+	fmt.Printf("\n== generic [float64, int] ==\n")
+	fmt.Printf("insert:       ")
+	mins := make([][2]float64, N)
+	maxs := make([][2]float64, N)
+	items := make([]int, N)
+	lotsa.Ops(N, 1, func(i, _ int) {
+		mins[i] = rects[i].min
+		maxs[i] = rects[i].max
+		items[i] = i
+	})
+
+	tr.base.Bulk(mins, maxs, items)
+
+	fmt.Printf("search-item:  ")
+	var count int
+	lotsa.Ops(N, 1, func(i, _ int) {
+		tr.Search(rects[i].min, rects[i].max,
+			func(min, max [2]float64, value int) bool {
+				if value == i {
+					count++
+					return false
+				}
+				return true
+			},
+		)
+	})
+	if count != N {
+		t.Fatalf("expected %d, got %d", N, count)
+	}
+
+	fmt.Printf("search-0.00002%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.0000002
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-0.2%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.002
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-1%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.01
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-5%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.05
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-10%%:   ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.10
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
 }

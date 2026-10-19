@@ -1095,40 +1095,38 @@ func TestRTreeBenchFloat64(t *testing.T) {
 }
 
 /*
-seed: 1781430046079402180
-=== RUN   TestRTreeBenchFloat64
+go test -run TestRTreeBenchFloat64 -timeout=0 -count=1
+seed: 1792418077867647763
 
 == generic [float64, int] ==
-insert:       5,000,000 ops in 3666ms, 1,364,035/sec, 733 ns/op, 302.6 MB, 63 bytes/op
-search-item:  5,000,000 ops in 3281ms, 1,523,890/sec, 656 ns/op
-search-0.00002%:    10,000 ops in 12ms, 839,792/sec, 1190 ns/op
-search-0.2%:    10,000 ops in 23ms, 430,379/sec, 2323 ns/op
-search-1%:    10,000 ops in 107ms, 93,392/sec, 10707 ns/op
-search-5%:    10,000 ops in 1499ms, 6,671/sec, 149901 ns/op
-search-10%:   10,000 ops in 5261ms, 1,900/sec, 526083 ns/op
-delete:       5,000,000 ops in 3569ms, 1,400,763/sec, 713 ns/op
-replace:      5,000,000 ops in 5914ms, 845,497/sec, 1182 ns/op
---- PASS: TestRTreeBenchFloat64 (27.94s)
+insert:       5,000,000 ops in 3362ms, 1,487,383/sec, 672 ns/op, 302.9 MB, 63 bytes/op
+search-item:  5,000,000 ops in 3020ms, 1,655,756/sec, 603 ns/op
+search-0.00002%:    10,000 ops in 8ms, 1,208,662/sec, 827 ns/op
+search-0.2%:    10,000 ops in 21ms, 471,432/sec, 2121 ns/op
+search-1%:    10,000 ops in 99ms, 101,037/sec, 9897 ns/op
+search-5%:    10,000 ops in 1317ms, 7,592/sec, 131704 ns/op
+search-10%:   10,000 ops in 4467ms, 2,238/sec, 446695 ns/op
+delete:       5,000,000 ops in 3205ms, 1,559,849/sec, 641 ns/op
+replace:      5,000,000 ops in 5642ms, 886,218/sec, 1128 ns/op
 PASS
-ok      github.com/lintang-b-s/rtree    27.981s
+ok      github.com/lintang-b-s/rtree    25.266s
 /*
 
 
 /*
-seed: 1781430078865823170
-=== RUN   TestSTRTreeBulkBenchFloat64
+test -run TestSTRTreeBulkBenchFloat64 -timeout=0 -count=1
+seed: 1792418059201960804
 
 == generic [float64, int] ==
-insert:       5,000,000 ops in 131ms, 38,244,966/sec, 26 ns/op, 464 bytes, 0 bytes/op
-search-item:  5,000,000 ops in 3749ms, 1,333,754/sec, 749 ns/op
-search-0.00002%:    10,000 ops in 13ms, 744,928/sec, 1342 ns/op
-search-0.2%:    10,000 ops in 25ms, 392,641/sec, 2546 ns/op
-search-1%:    10,000 ops in 115ms, 86,911/sec, 11505 ns/op
-search-5%:    10,000 ops in 1154ms, 8,667/sec, 115373 ns/op
-search-10%:   10,000 ops in 3519ms, 2,841/sec, 351902 ns/op
---- PASS: TestSTRTreeBulkBenchFloat64 (12.89s)
+insert:       1 ops in 1577ms, 0/sec, 1577380920 ns/op, 13.4 MB, 14091840 bytes/op
+search-item:  5,000,000 ops in 2700ms, 1,851,797/sec, 540 ns/op
+search-0.00002%:    10,000 ops in 7ms, 1,519,202/sec, 658 ns/op
+search-0.2%:    10,000 ops in 16ms, 641,772/sec, 1558 ns/op
+search-1%:    10,000 ops in 84ms, 119,194/sec, 8389 ns/op
+search-5%:    10,000 ops in 919ms, 10,878/sec, 91922 ns/op, 3.2 KB, 0 bytes/op
+search-10%:   10,000 ops in 3498ms, 2,858/sec, 349827 ns/op
 PASS
-ok      github.com/lintang-b-s/rtree    12.914s
+ok      github.com/lintang-b-s/rtree    9.164s
 */
 
 func TestSTRTreeBulkBenchFloat64(t *testing.T) {
@@ -1150,13 +1148,14 @@ func TestSTRTreeBulkBenchFloat64(t *testing.T) {
 	mins := make([][2]float64, N)
 	maxs := make([][2]float64, N)
 	items := make([]int, N)
-	lotsa.Ops(N, 1, func(i, _ int) {
+	for i := 0; i < N; i++ {
 		mins[i] = rects[i].min
 		maxs[i] = rects[i].max
 		items[i] = i
+	}
+	lotsa.Ops(1, 1, func(i, _ int) {
+		tr.base.Bulk(mins, maxs, items)
 	})
-
-	tr.base.Bulk(mins, maxs, items)
 
 	fmt.Printf("search-item:  ")
 	var count int

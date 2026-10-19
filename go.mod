@@ -1,6 +1,6 @@
 module github.com/lintang-b-s/rtree
 
-go 1.18
+go 1.27.1
 
 require (
 	github.com/tidwall/geoindex v1.7.0
@@ -8,5 +8,3 @@ require (
 )
 
 require github.com/tidwall/cities v0.1.0 // indirect
-
-

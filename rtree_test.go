@@ -5,8 +5,11 @@
 package rtree
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"runtime"
@@ -311,6 +314,72 @@ func TestRandomPointsSVGBulk(t *testing.T) {
 		os.WriteFile("rand1_bulk.svg", []byte(tr.svg()), 0666)
 	}
 }
+func TestRandomPointsSVGBulkIO(t *testing.T) {
+	const SEED = 909
+	const N = 100_000
+	{
+		rand.Seed(SEED)
+		var tr RTreeG[int]
+
+		mins := make([][2]float64, N)
+		maxs := make([][2]float64, N)
+		items := make([]int, N)
+		for i := 0; i < N; i++ {
+			pt := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+			mins[i] = pt
+			maxs[i] = pt
+			items[i] = i
+		}
+		tr.base.Bulk(mins, maxs, items)
+
+		const tSize = 8
+		var writeBuf [maxEntries * tSize]byte
+		var buf bytes.Buffer
+		if err := tr.base.WriteTo(&buf, func(w io.Writer, items []int) error {
+			for len(items) > 0 {
+				chunk := items
+				if len(chunk) > maxEntries {
+					chunk = chunk[:maxEntries]
+				}
+				size := len(chunk) * tSize
+				for i, v := range chunk {
+					binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+				}
+				if _, err := w.Write(writeBuf[:size]); err != nil {
+					return err
+				}
+				items = items[len(chunk):]
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("failed to WriteTo: %v", err)
+		}
+
+		var readBuf [maxEntries * tSize]byte
+		var trn RTreeG[int]
+		trn.base.ReadFrom(&buf, func(r io.Reader, items []int) error {
+			for len(items) > 0 {
+				chunk := items
+				if len(chunk) > maxEntries {
+					chunk = chunk[:maxEntries]
+				}
+				size := len(chunk) * tSize
+				if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
+					if errors.Is(err, io.EOF) {
+						return io.ErrUnexpectedEOF
+					}
+					return err
+				}
+				for i := range chunk {
+					chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
+				}
+				items = items[len(chunk):]
+			}
+			return nil
+		})
+		os.WriteFile("rand1_bulk_io.svg", []byte(trn.svg()), 0666)
+	}
+}
 
 const predefPts = `
 -52.9434,2.3502;79.7989,0.0965;-70.7779,57.1756;36.2933,77.0761;21.4716,3.4453;-14.5109,-18.9968;-33.9442,-11.1449;10.3230,-66.1787;-76.7850,-68.3149;48.2775,-57.6251;1.8490,32.8058;-6.3306,-50.2694;-11.0860,-26.7247;-71.1707,-77.4811;-40.9573,-81.1828;13.3053,26.7539;-15.3284,-43.5700;-16.2263,30.5950;53.7956,42.5554;-17.4207,-45.7420;28.6247,-73.9760;-47.9121,-24.0529;20.3135,81.6178;-75.7848,-61.4280;60.6492,45.6531;32.6774,-1.8117;6.7576,-30.7179;36.9515,84.9250;22.8975,23.5716;
@@ -475,14 +544,77 @@ func writeSVGBulk(pts, filename string) {
 	os.WriteFile(filename, []byte(svg), 0666)
 }
 
+func writeSVGBulkIO(pts, filename string) {
+	var tr RTreeG[int]
+	mins := make([][2]float64, 0, 1000)
+	maxs := make([][2]float64, 0, 1000)
+	items := make([]int, 0, 1000)
+	for i, pt := range parsePts(pts) {
+		mins = append(mins, pt)
+		maxs = append(maxs, pt)
+		items = append(items, i)
+	}
+	tr.base.Bulk(mins, maxs, items)
+
+	const tSize = 8
+	var writeBuf [maxEntries * tSize]byte
+	var buf bytes.Buffer
+	if err := tr.base.WriteTo(&buf, func(w io.Writer, items []int) error {
+		for len(items) > 0 {
+			chunk := items
+			if len(chunk) > maxEntries {
+				chunk = chunk[:maxEntries]
+			}
+			size := len(chunk) * tSize
+			for i, v := range chunk {
+				binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+			}
+			if _, err := w.Write(writeBuf[:size]); err != nil {
+				return err
+			}
+			items = items[len(chunk):]
+		}
+		return nil
+	}); err != nil {
+		panic(fmt.Errorf("failed to WriteTo: %v", err))
+	}
+
+	var readBuf [maxEntries * tSize]byte
+	var trn RTreeG[int]
+	trn.base.ReadFrom(&buf, func(r io.Reader, items []int) error {
+		for len(items) > 0 {
+			chunk := items
+			if len(chunk) > maxEntries {
+				chunk = chunk[:maxEntries]
+			}
+			size := len(chunk) * tSize
+			if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
+				if errors.Is(err, io.EOF) {
+					return io.ErrUnexpectedEOF
+				}
+				return err
+			}
+			for i := range chunk {
+				chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
+			}
+			items = items[len(chunk):]
+		}
+		return nil
+	})
+	svg := trn.svg()
+	os.WriteFile(filename, []byte(svg), 0666)
+}
+
 func TestPredefinedSVG(t *testing.T) {
 	writeSVG(predefPts, "predefined.svg")
 	writeSVGBulk(predefPts, "predefined_bulk.svg")
+	writeSVGBulkIO(predefPts, "predefined_bulk_io.svg")
 }
 
 func TestCitiesSVG(t *testing.T) {
 	writeSVG(citiesPts, "cities.svg")
 	writeSVGBulk(citiesPts, "cities_bulk.svg")
+	writeSVGBulkIO(citiesPts, "cities_bulk_io.svg")
 }
 
 func TestSane(t *testing.T) {
@@ -589,6 +721,8 @@ func TestSane(t *testing.T) {
 
 	}
 }
+
+
 
 func rSane[T comparable](tr *RTreeG[T]) error {
 	if tr.base.root == nil {
@@ -973,10 +1107,74 @@ func TestNearby(t *testing.T) {
 		}
 	})
 
+	t.Run("GN Bulk + IO", func(t *testing.T) {
+		var output []int
+		var tr RTreeGN[int, int]
+
+		tr.Bulk([][2]int{{100, 100}, {200, 200}}, [][2]int{{100, 100}, {200, 200}}, []int{1, 2})
+
+		const tSize = 8
+		var writeBuf [maxEntries * tSize]byte
+		var buf bytes.Buffer
+		if err := tr.WriteTo(&buf, func(w io.Writer, items []int) error {
+			for len(items) > 0 {
+				chunk := items
+				if len(chunk) > maxEntries {
+					chunk = chunk[:maxEntries]
+				}
+				size := len(chunk) * tSize
+				for i, v := range chunk {
+					binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+				}
+				if _, err := w.Write(writeBuf[:size]); err != nil {
+					return err
+				}
+				items = items[len(chunk):]
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("failed to WriteTo: %v", err)
+		}
+
+		var readBuf [maxEntries * tSize]byte
+		var trn RTreeGN[int, int]
+		trn.ReadFrom(&buf, func(r io.Reader, items []int) error {
+			for len(items) > 0 {
+				chunk := items
+				if len(chunk) > maxEntries {
+					chunk = chunk[:maxEntries]
+				}
+				size := len(chunk) * tSize
+				if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
+					if errors.Is(err, io.EOF) {
+						return io.ErrUnexpectedEOF
+					}
+					return err
+				}
+				for i := range chunk {
+					chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
+				}
+				items = items[len(chunk):]
+			}
+			return nil
+		})
+		trn.Nearby(
+			BoxDist[int, int]([2]int{10, 10}, [2]int{10, 10}, nil),
+			func(min, max [2]int, data int, dist int) bool {
+				output = append(output, data, dist)
+				return true
+			},
+		)
+		exp := "[1 16200 2 72200]"
+		if fmt.Sprintf("%d", output) != exp {
+			t.Fatalf("expected %s, got %d", exp, output)
+		}
+	})
+
 }
 
 func TestRTreeBenchFloat64(t *testing.T) {
-	numPointOrRects := 5_000_000
+	numPointOrRects := 10_000_000
 	kind := byte('m')
 	var tr RTreeG[int]
 
@@ -1096,41 +1294,50 @@ func TestRTreeBenchFloat64(t *testing.T) {
 
 /*
 go test -run TestRTreeBenchFloat64 -timeout=0 -count=1
-seed: 1792418077867647763
+
+seed: 1792493116483649918
 
 == generic [float64, int] ==
-insert:       5,000,000 ops in 3362ms, 1,487,383/sec, 672 ns/op, 302.9 MB, 63 bytes/op
-search-item:  5,000,000 ops in 3020ms, 1,655,756/sec, 603 ns/op
-search-0.00002%:    10,000 ops in 8ms, 1,208,662/sec, 827 ns/op
-search-0.2%:    10,000 ops in 21ms, 471,432/sec, 2121 ns/op
-search-1%:    10,000 ops in 99ms, 101,037/sec, 9897 ns/op
-search-5%:    10,000 ops in 1317ms, 7,592/sec, 131704 ns/op
-search-10%:   10,000 ops in 4467ms, 2,238/sec, 446695 ns/op
-delete:       5,000,000 ops in 3205ms, 1,559,849/sec, 641 ns/op
-replace:      5,000,000 ops in 5642ms, 886,218/sec, 1128 ns/op
+insert:       10,000,000 ops in 9351ms, 1,069,453/sec, 935 ns/op, 604.2 MB, 63 bytes/op
+search-item:  10,000,000 ops in 8519ms, 1,173,844/sec, 851 ns/op
+search-0.00002%:    10,000 ops in 13ms, 790,971/sec, 1264 ns/op
+search-0.2%:    10,000 ops in 31ms, 326,599/sec, 3061 ns/op
+search-1%:    10,000 ops in 200ms, 49,972/sec, 20011 ns/op, 3.2 KB, 0 bytes/op
+search-5%:    10,000 ops in 3040ms, 3,288/sec, 304049 ns/op
+search-10%:   10,000 ops in 10144ms, 985/sec, 1014436 ns/op
+delete:       10,000,000 ops in 9446ms, 1,058,637/sec, 944 ns/op
+replace:      10,000,000 ops in 14396ms, 694,618/sec, 1439 ns/op
 PASS
-ok      github.com/lintang-b-s/rtree    25.266s
-/*
+ok      github.com/lintang-b-s/rtree    65.460s
+➜  rtree git:(master) ✗ go test -run TestSTRTreeBulkBenchFloat64 -timeout=0 -count=1
 
+seed: 1792493187765111814
 
-/*
-test -run TestSTRTreeBulkBenchFloat64 -timeout=0 -count=1
-seed: 1792418059201960804
+== generic [float64, int] bulk ==
+bulk:       1 ops in 3222ms, 0/sec, 3221781305 ns/op, 25.9 MB, 27156544 bytes/op
+search-item:  10,000,000 ops in 6414ms, 1,559,075/sec, 641 ns/op
+search-0.00002%:    10,000 ops in 10ms, 973,191/sec, 1027 ns/op
+search-0.2%:    10,000 ops in 24ms, 425,295/sec, 2351 ns/op, 3.2 KB, 0 bytes/op
+search-1%:    10,000 ops in 154ms, 65,067/sec, 15368 ns/op
+search-5%:    10,000 ops in 2115ms, 4,727/sec, 211510 ns/op
+search-10%:   10,000 ops in 7575ms, 1,320/sec, 757531 ns/op
 
-== generic [float64, int] ==
-insert:       1 ops in 1577ms, 0/sec, 1577380920 ns/op, 13.4 MB, 14091840 bytes/op
-search-item:  5,000,000 ops in 2700ms, 1,851,797/sec, 540 ns/op
-search-0.00002%:    10,000 ops in 7ms, 1,519,202/sec, 658 ns/op
-search-0.2%:    10,000 ops in 16ms, 641,772/sec, 1558 ns/op
-search-1%:    10,000 ops in 84ms, 119,194/sec, 8389 ns/op
-search-5%:    10,000 ops in 919ms, 10,878/sec, 91922 ns/op, 3.2 KB, 0 bytes/op
-search-10%:   10,000 ops in 3498ms, 2,858/sec, 349827 ns/op
+== generic [float64, int] bulk insert + IO ==
+bulk:       1 ops in 3346ms, 0/sec, 3345945913 ns/op, 25.9 MB, 27134672 bytes/op
+writeTo:       1 ops in 390ms, 2/sec, 390105647 ns/op, 40.6 MB, 42609656 bytes/op
+ReadFrom:       1 ops in 185ms, 5/sec, 185443820 ns/op
+search-item:  10,000,000 ops in 5921ms, 1,688,896/sec, 592 ns/op
+search-0.00002%:    10,000 ops in 9ms, 1,100,765/sec, 908 ns/op
+search-0.2%:    10,000 ops in 24ms, 413,956/sec, 2415 ns/op
+search-1%:    10,000 ops in 124ms, 80,654/sec, 12398 ns/op
+search-5%:    10,000 ops in 1745ms, 5,730/sec, 174509 ns/op
+search-10%:   10,000 ops in 5556ms, 1,799/sec, 555646 ns/op
 PASS
-ok      github.com/lintang-b-s/rtree    9.164s
+ok      github.com/lintang-b-s/rtree    38.257s
 */
 
 func TestSTRTreeBulkBenchFloat64(t *testing.T) {
-	numPointOrRects := 5_000_000
+	numPointOrRects := 10_000_000
 	kind := byte('m')
 	var tr RTreeG[int]
 
@@ -1143,8 +1350,8 @@ func TestSTRTreeBulkBenchFloat64(t *testing.T) {
 	lotsa.Output = os.Stdout
 	lotsa.MemUsage = true
 
-	fmt.Printf("\n== generic [float64, int] ==\n")
-	fmt.Printf("insert:       ")
+	fmt.Printf("\n== generic [float64, int] bulk ==\n")
+	fmt.Printf("bulk:       ")
 	mins := make([][2]float64, N)
 	maxs := make([][2]float64, N)
 	items := make([]int, N)
@@ -1220,6 +1427,153 @@ func TestSTRTreeBulkBenchFloat64(t *testing.T) {
 		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
 		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
 		tr.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+}
+
+func TestSTRTreeBulkBenchFloat64IO(t *testing.T) {
+	numPointOrRects := 10_000_000
+	kind := byte('m')
+	var tr RTreeG[int]
+
+	N := numPointOrRects
+	rects := make([]rect[float64], N)
+	for i := 0; i < N; i++ {
+		rects[i] = randRect(kind)
+	}
+
+	lotsa.Output = os.Stdout
+	lotsa.MemUsage = true
+
+	fmt.Printf("\n== generic [float64, int] bulk insert + IO ==\n")
+	fmt.Printf("bulk:       ")
+	mins := make([][2]float64, N)
+	maxs := make([][2]float64, N)
+	items := make([]int, N)
+	for i := 0; i < N; i++ {
+		mins[i] = rects[i].min
+		maxs[i] = rects[i].max
+		items[i] = i
+	}
+	lotsa.Ops(1, 1, func(i, _ int) {
+		tr.base.Bulk(mins, maxs, items)
+	})
+	var buf bytes.Buffer
+	fmt.Printf("writeTo:       ")
+	const tSize = 8
+	lotsa.Ops(1, 1, func(i, thread int) {
+		var writeBuf [maxEntries * tSize]byte
+		if err := tr.base.WriteTo(&buf, func(w io.Writer, items []int) error {
+			for len(items) > 0 {
+				chunk := items
+				if len(chunk) > maxEntries {
+					chunk = chunk[:maxEntries]
+				}
+				size := len(chunk) * tSize
+				for i, v := range chunk {
+					binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+				}
+				if _, err := w.Write(writeBuf[:size]); err != nil {
+					return err
+				}
+				items = items[len(chunk):]
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("failed to WriteTo: %v", err)
+		}
+	})
+
+	fmt.Printf("ReadFrom:       ")
+	var trn RTreeG[int]
+	lotsa.Ops(1, 1, func(i, thread int) {
+		var readBuf [maxEntries * tSize]byte
+		trn.base.ReadFrom(&buf, func(r io.Reader, items []int) error {
+			for len(items) > 0 {
+				chunk := items
+				if len(chunk) > maxEntries {
+					chunk = chunk[:maxEntries]
+				}
+				size := len(chunk) * tSize
+				if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
+					if errors.Is(err, io.EOF) {
+						return io.ErrUnexpectedEOF
+					}
+					return err
+				}
+				for i := range chunk {
+					chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
+				}
+				items = items[len(chunk):]
+			}
+			return nil
+		})
+	})
+
+	fmt.Printf("search-item:  ")
+	var count int
+	lotsa.Ops(N, 1, func(i, _ int) {
+		trn.Search(rects[i].min, rects[i].max,
+			func(min, max [2]float64, value int) bool {
+				if value == i {
+					count++
+					return false
+				}
+				return true
+			},
+		)
+	})
+	if count != N {
+		t.Fatalf("expected %d, got %d", N, count)
+	}
+
+	fmt.Printf("search-0.00002%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.0000002
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		trn.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-0.2%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.002
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		trn.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-1%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.01
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		trn.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-5%%:    ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.05
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		trn.Search(min, max, func(min, max [2]float64, value int) bool {
+			return true
+		})
+	})
+
+	fmt.Printf("search-10%%:   ")
+	lotsa.Ops(10_000, 1, func(i, _ int) {
+		const p = 0.10
+		min := [2]float64{rand.Float64()*360 - 180, rand.Float64()*180 - 90}
+		max := [2]float64{min[0] + 360*p, min[1] + 180*p}
+		trn.Search(min, max, func(min, max [2]float64, value int) bool {
 			return true
 		})
 	})

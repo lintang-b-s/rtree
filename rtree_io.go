@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"slices"
+	"sync"
 )
 
 var magicNumber = [4]byte{'r', 't', 'r', 'f'} // https://gist.github.com/leommoore/f9e57ba2aa4bf197ebc5
@@ -418,6 +419,13 @@ func (tr *RTreeGN[N, T]) ReadFrom(r io.Reader, readItems func(r io.Reader, items
 	}
 	newTr.root = root
 	*tr = newTr
+
+	if tr.qpool == nil {
+		tr.qpool = &sync.Pool{
+			New: func() any { return &queue[N, T]{} },
+		}
+	}
+
 	return nil
 }
 

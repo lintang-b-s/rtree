@@ -333,47 +333,31 @@ func TestRandomPointsSVGBulkIO(t *testing.T) {
 		tr.base.Bulk(mins, maxs, items)
 
 		const tSize = 8
-		var writeBuf [maxEntries * tSize]byte
 		var buf bytes.Buffer
 		if err := tr.base.WriteTo(&buf, func(w io.Writer, items []int) error {
-			for len(items) > 0 {
-				chunk := items
-				if len(chunk) > maxEntries {
-					chunk = chunk[:maxEntries]
-				}
-				size := len(chunk) * tSize
-				for i, v := range chunk {
-					binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
-				}
-				if _, err := w.Write(writeBuf[:size]); err != nil {
-					return err
-				}
-				items = items[len(chunk):]
+			var writeBuf [maxEntries * tSize]byte
+			for i, v := range items {
+				binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+			}
+			if _, err := w.Write(writeBuf[:]); err != nil {
+				return err
 			}
 			return nil
 		}); err != nil {
 			t.Fatalf("failed to WriteTo: %v", err)
 		}
 
-		var readBuf [maxEntries * tSize]byte
 		var trn RTreeG[int]
 		trn.base.ReadFrom(&buf, func(r io.Reader, items []int) error {
-			for len(items) > 0 {
-				chunk := items
-				if len(chunk) > maxEntries {
-					chunk = chunk[:maxEntries]
+			var readBuf [maxEntries * tSize]byte
+			if _, err := io.ReadFull(r, readBuf[:]); err != nil {
+				if errors.Is(err, io.EOF) {
+					return io.ErrUnexpectedEOF
 				}
-				size := len(chunk) * tSize
-				if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
-					if errors.Is(err, io.EOF) {
-						return io.ErrUnexpectedEOF
-					}
-					return err
-				}
-				for i := range chunk {
-					chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
-				}
-				items = items[len(chunk):]
+				return err
+			}
+			for i := range items {
+				items[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
 			}
 			return nil
 		})
@@ -557,47 +541,32 @@ func writeSVGBulkIO(pts, filename string) {
 	tr.base.Bulk(mins, maxs, items)
 
 	const tSize = 8
-	var writeBuf [maxEntries * tSize]byte
+
 	var buf bytes.Buffer
 	if err := tr.base.WriteTo(&buf, func(w io.Writer, items []int) error {
-		for len(items) > 0 {
-			chunk := items
-			if len(chunk) > maxEntries {
-				chunk = chunk[:maxEntries]
-			}
-			size := len(chunk) * tSize
-			for i, v := range chunk {
-				binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
-			}
-			if _, err := w.Write(writeBuf[:size]); err != nil {
-				return err
-			}
-			items = items[len(chunk):]
+		var writeBuf [maxEntries * tSize]byte
+		for i, v := range items {
+			binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+		}
+		if _, err := w.Write(writeBuf[:]); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
 		panic(fmt.Errorf("failed to WriteTo: %v", err))
 	}
 
-	var readBuf [maxEntries * tSize]byte
 	var trn RTreeG[int]
 	trn.base.ReadFrom(&buf, func(r io.Reader, items []int) error {
-		for len(items) > 0 {
-			chunk := items
-			if len(chunk) > maxEntries {
-				chunk = chunk[:maxEntries]
+		var readBuf [maxEntries * tSize]byte
+		if _, err := io.ReadFull(r, readBuf[:]); err != nil {
+			if errors.Is(err, io.EOF) {
+				return io.ErrUnexpectedEOF
 			}
-			size := len(chunk) * tSize
-			if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
-				if errors.Is(err, io.EOF) {
-					return io.ErrUnexpectedEOF
-				}
-				return err
-			}
-			for i := range chunk {
-				chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
-			}
-			items = items[len(chunk):]
+			return err
+		}
+		for i := range items {
+			items[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
 		}
 		return nil
 	})
@@ -721,8 +690,6 @@ func TestSane(t *testing.T) {
 
 	}
 }
-
-
 
 func rSane[T comparable](tr *RTreeG[T]) error {
 	if tr.base.root == nil {
@@ -1114,47 +1081,32 @@ func TestNearby(t *testing.T) {
 		tr.Bulk([][2]int{{100, 100}, {200, 200}}, [][2]int{{100, 100}, {200, 200}}, []int{1, 2})
 
 		const tSize = 8
-		var writeBuf [maxEntries * tSize]byte
+
 		var buf bytes.Buffer
 		if err := tr.WriteTo(&buf, func(w io.Writer, items []int) error {
-			for len(items) > 0 {
-				chunk := items
-				if len(chunk) > maxEntries {
-					chunk = chunk[:maxEntries]
-				}
-				size := len(chunk) * tSize
-				for i, v := range chunk {
-					binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
-				}
-				if _, err := w.Write(writeBuf[:size]); err != nil {
-					return err
-				}
-				items = items[len(chunk):]
+			var writeBuf [maxEntries * tSize]byte
+			for i, v := range items {
+				binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+			}
+			if _, err := w.Write(writeBuf[:]); err != nil {
+				return err
 			}
 			return nil
 		}); err != nil {
 			t.Fatalf("failed to WriteTo: %v", err)
 		}
 
-		var readBuf [maxEntries * tSize]byte
 		var trn RTreeGN[int, int]
 		trn.ReadFrom(&buf, func(r io.Reader, items []int) error {
-			for len(items) > 0 {
-				chunk := items
-				if len(chunk) > maxEntries {
-					chunk = chunk[:maxEntries]
+			var readBuf [maxEntries * tSize]byte
+			if _, err := io.ReadFull(r, readBuf[:]); err != nil {
+				if errors.Is(err, io.EOF) {
+					return io.ErrUnexpectedEOF
 				}
-				size := len(chunk) * tSize
-				if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
-					if errors.Is(err, io.EOF) {
-						return io.ErrUnexpectedEOF
-					}
-					return err
-				}
-				for i := range chunk {
-					chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
-				}
-				items = items[len(chunk):]
+				return err
+			}
+			for i := range items {
+				items[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
 			}
 			return nil
 		})
@@ -1309,6 +1261,7 @@ delete:       10,000,000 ops in 9446ms, 1,058,637/sec, 944 ns/op
 replace:      10,000,000 ops in 14396ms, 694,618/sec, 1439 ns/op
 PASS
 ok      github.com/lintang-b-s/rtree    65.460s
+
 ➜  rtree git:(master) ✗ go test -run TestSTRTreeBulkBenchFloat64 -timeout=0 -count=1
 
 seed: 1792493187765111814
@@ -1463,21 +1416,13 @@ func TestSTRTreeBulkBenchFloat64IO(t *testing.T) {
 	fmt.Printf("writeTo:       ")
 	const tSize = 8
 	lotsa.Ops(1, 1, func(i, thread int) {
-		var writeBuf [maxEntries * tSize]byte
 		if err := tr.base.WriteTo(&buf, func(w io.Writer, items []int) error {
-			for len(items) > 0 {
-				chunk := items
-				if len(chunk) > maxEntries {
-					chunk = chunk[:maxEntries]
-				}
-				size := len(chunk) * tSize
-				for i, v := range chunk {
-					binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
-				}
-				if _, err := w.Write(writeBuf[:size]); err != nil {
-					return err
-				}
-				items = items[len(chunk):]
+			var writeBuf [maxEntries * tSize]byte
+			for i, v := range items {
+				binary.LittleEndian.PutUint64(writeBuf[i*tSize:(i+1)*tSize], uint64(v))
+			}
+			if _, err := w.Write(writeBuf[:]); err != nil {
+				return err
 			}
 			return nil
 		}); err != nil {
@@ -1488,24 +1433,16 @@ func TestSTRTreeBulkBenchFloat64IO(t *testing.T) {
 	fmt.Printf("ReadFrom:       ")
 	var trn RTreeG[int]
 	lotsa.Ops(1, 1, func(i, thread int) {
-		var readBuf [maxEntries * tSize]byte
 		trn.base.ReadFrom(&buf, func(r io.Reader, items []int) error {
-			for len(items) > 0 {
-				chunk := items
-				if len(chunk) > maxEntries {
-					chunk = chunk[:maxEntries]
+			var readBuf [maxEntries * tSize]byte
+			if _, err := io.ReadFull(r, readBuf[:]); err != nil {
+				if errors.Is(err, io.EOF) {
+					return io.ErrUnexpectedEOF
 				}
-				size := len(chunk) * tSize
-				if _, err := io.ReadFull(r, readBuf[:size]); err != nil {
-					if errors.Is(err, io.EOF) {
-						return io.ErrUnexpectedEOF
-					}
-					return err
-				}
-				for i := range chunk {
-					chunk[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
-				}
-				items = items[len(chunk):]
+				return err
+			}
+			for i := range items {
+				items[i] = int(binary.LittleEndian.Uint64(readBuf[i*tSize : (i+1)*tSize]))
 			}
 			return nil
 		})
